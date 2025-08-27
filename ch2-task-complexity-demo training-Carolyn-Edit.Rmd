@@ -1,0 +1,251 @@
+---
+title: "task complexity pilot July 2025"
+author: "Alex Berger"
+date: "2025-07-02"
+output: html_document
+---
+
+```{r}
+library(readxl) #excel
+library(tidyverse) #cleaning dataset
+library(ggplot2) #make graphs
+library(ggpubr) #other function to make graph
+library(rstatix) #cleaning dataset
+```
+
+
+#Tests passed
+```{r}
+#how many tests on average it took for an individual to go to the next coverage level
+test.passed = read_excel("/:D/pilot_tc_clean.xlsx", sheet=3)
+
+success_data= test.passed %>%
+  rowwise() %>%
+  mutate(success_rate = mean(c_across(test.10:test.100), na.rm = TRUE)) %>%
+  ungroup() #get the average for number of tests for all coverage
+
+t.test(success_rate ~ population, data = success_data) #p=0.8 - no difference
+#Not interesting though
+```
+```{r}
+#Count the number of successful trial passed
+df_long =test.passed %>% 
+  pivot_longer(cols = starts_with("test"), names_to = "test", values_to = "passed")
+
+# Get the number of individual that passed the trial for each coverage (used for table)
+pass_counts = df_long %>%
+  filter(!is.na(passed) & passed != 0) %>%
+  group_by(population, test) %>%
+  summarise(n_passed = n_distinct(id)) %>%
+  ungroup()
+
+print(pass_counts)
+
+#Number of tests done within 1 coverage % for individuals to succeed and go to the next coverage % 
+df_long = na.omit(df_long)
+df_long = df_long[ -c(3) ] #remove the training passed on the dataframe
+
+df_long %>%
+  group_by(population, test) %>%
+  summarise(mean_tests = mean(passed, na.rm = TRUE),
+    sd_tests = sd(passed, na.rm = TRUE),
+    se = sd_tests / sqrt(n()),
+    .groups = "drop")
+
+#Graphs
+ggplot(df_long, aes(x = factor(test), y = passed, group = id, color = population)) +
+  geom_line(alpha = 0.4) + 
+  geom_point(alpha = 0.6) +  # individual points
+  stat_summary(fun.data = mean_se, geom = "errorbar", aes(group = population, color = population), width = 0.2, size = 1.1, position = position_dodge(width = 0.3)
+  ) +
+  stat_summary(fun = mean, geom = "point", aes(group = population, color = population), size = 5, position = position_dodge(width = 0.3)
+  ) +
+  stat_summary(fun = mean, geom = "line", aes(group = population, color = population),size = 1.2
+  ) +
+  labs(title = "Number of trials done by population",x = "Trials",y = "Number of tests", color = "Population") +
+  theme_classic()
+
+#Stats
+#Don't worry about those
+library(lme4)
+
+model_pois <- glmer(passed ~ population * test + (1 | id),
+                    data = df_long,
+                    family = poisson(link = "log"))
+
+summary(model_pois)
+
+model =glmer(passed ~ population + test + (1 | id), family = poisson, data = df_long)
+library(ggeffects)
+plot(ggpredict(model, terms = c("test", "population")))
+```
+Don't worry about this, we are not using it
+```{r}
+#If passed, give the value 1 and if not passed give the value 0 in a dataset
+test.passed = read_excel("D:/pilot_tc_clean.xlsx", sheet=3)
+df_long =test.passed %>% 
+  pivot_longer(cols = starts_with("test"), names_to = "test", values_to = "passed") #make the data long
+df_long$binary <- ifelse(is.na(df_long$passed), 0, ifelse(df_long$passed >= 1, 1, 0))
+
+library(lme4)
+
+model <- glmer(binary ~ population * test + (1 | id), 
+               family = binomial(link = "logit"),
+               data = df_long)
+model <- glmer(binary ~ population * test + (1 | id),
+               family = binomial(link = "logit"),
+               data = df_long,
+               control = glmerControl(optimizer = "bobyqa"))
+
+summary(model)
+
+install.packages("emmeans")
+library(emmeans)
+emm <- emmeans(model, ~ test)
+pairs(emm)
+
+library(ggplot2)
+plot(emm)
+```
+
+#Latency to first solve the puzzle for each coverage 
+```{r}
+latency.coverage = read_excel("D:/pilot_tc_clean.xlsx", sheet=2) #Call for the data set and sheet number 2 
+str(latency.coverage) #Check what each column is made off (numerical, character or factor)
+
+latency.coverage$id=as.character(latency.coverage$id)#make sure ID is character
+latency.coverage$population= as.factor(latency.coverage$population) #population is factorial (domestic or aripo)
+latency.coverage$coverage= as.factor(latency.coverage$coverage) #Coverage is factorial
+
+#Graphs
+ggplot(latency.coverage, aes(x = coverage, y = latency.s, fill = population)) +
+  geom_boxplot(position = position_dodge(0.8), outlier.shape = NA) +  # hides outliers
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), alpha = 0.4) +
+  labs(title = "Latency to the First Feeder by Coverage % and Population",
+       x = "Coverage (%)",
+       y = "Latency (s)",
+       fill = "Population") +
+  theme_classic() #set up the them for the graph
+
+ggplot(latency.coverage, aes(x = coverage, y = latency.s, group = id, color = population)) +
+  geom_line(alpha = 0.4) + 
+  geom_point(alpha = 0.6) +  # individual points
+  stat_summary(fun.data = mean_se, geom = "errorbar", aes(group = population, color = population), width = 0.2, size = 1.1, position = position_dodge(width = 0.3)
+  ) +
+  stat_summary(fun = mean, geom = "point", aes(group = population, color = population), size = 5, position = position_dodge(width = 0.3)
+  ) +
+  stat_summary(fun = mean, geom = "line", aes(group = population, color = population),size = 1.2
+  ) +
+  labs(title = "Latency to the First Feeder by Coverage % and Population",x = "Coverage (%)",y = "Latency (s)", color = "Population") +
+  theme_classic()
+
+
+#Stats
+
+#Get the SE and mean values for each coverages and populations
+latency.coverage %>%
+  group_by(population, coverage) %>%
+  summarise(mean = mean(latency.s, na.rm = TRUE),
+            se = sd(latency.s, na.rm = TRUE) / sqrt(n()),
+            .groups = "drop")
+
+#Repeated measure ANOVA
+latency.coverage %>%
+  group_by(population, coverage) %>%
+  shapiro_test(latency.s) #Check the normality of the popualtion at each coverage
+
+ggqqplot(latency.coverage, "latency.s", ggtheme = theme_classic()) +
+  facet_grid(coverage ~ population, labeller = "label_both") #graph normality and linearity
+
+latency.coverage= latency.coverage %>% drop_na(latency.s) #Drops NAs
+res.aov= anova_test(
+  data = latency.coverage,
+  dv = latency.s,
+  wid = id,
+  within = coverage,
+  between = population
+) #repeated measure ANOVA
+
+get_anova_table(res.aov)
+
+pwc <- latency.coverage %>%
+  group_by(coverage) %>%
+  pairwise_t_test(
+    latency.s ~ population, paired = FALSE,
+    p.adjust.method = "bonferroni"
+    )
+pwc #at 60%, p=0.7 comparing Domestics to Aripo
+```
+
+```{r}
+#identify_outliers()
+#shapiro_test() #check for outliers
+#need to do sheet 3 or sheet 4??
+
+test.passed = read_excel("/Users/carmen/Downloads/pilot_tc_clean.xlsx", sheet=1)
+set.seed(123)
+test.passed %>% sample_n_by(population, size = 2)
+```
+
+
+```{r}
+success_data = test.passed %>%
+  group_by(population) %>%
+  get_summary_stats(latency.last, type = "mean_sd")
+success_data
+
+```
+
+
+```{r}
+bxp <- ggboxplot( test.passed, x = "population", y = "latency.last", ylab = "Latency (s)", xlab = "Populations", add = "jitter")
+bxp
+```
+
+
+```{r}
+test.passed %>%
+  group_by(population) %>%
+  identify_outliers(latency.last)
+```
+
+
+```{r}
+test.passed = read_excel("/Users/carmen/Downloads/pilot_tc_clean.xlsx", sheet=1)
+test.passed %>%
+  group_by(population) %>%
+  shapiro_test(latency.last)
+```
+
+
+```{r}
+# ggqqplot(datagrame, name of column to plot, facet.by - make different plots using this as the difference
+ggqqplot(test.passed, x = "latency.last", facet.by = "population")
+```
+```{r}
+```
+
+
+```{r}
+test.passed %>% levene_test(latency.last ~ population) #dont really understand what the ~ does still
+```
+```{r}
+stat.test <- test.passed %>% 
+  t_test(latency.last ~ population) %>%
+  add_significance()
+stat.test
+```
+
+
+```{r}
+test.passed %>%  cohens_d(latency.last ~ population, var.equal = FALSE)
+```
+
+
+```{r}
+stat.test <- stat.test %>% add_xy_position(x = "population")
+bxp + 
+  stat_pvalue_manual(stat.test, tip.length = 0) +
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE))
+```
+
